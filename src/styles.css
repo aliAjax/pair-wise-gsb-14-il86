@@ -83,7 +83,7 @@ h1 {
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 14px;
   margin-bottom: 18px;
 }
@@ -105,6 +105,47 @@ h1 {
   display: block;
   margin-top: 8px;
   font-size: 30px;
+}
+
+.metric strong.compact {
+  font-size: 20px;
+  line-height: 38px;
+}
+
+.topbar-side {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+
+.station-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.station-switch select {
+  width: auto;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.tabs button {
+  background: #fff;
+  color: #445069;
+  border: 1px solid #d9e2ee;
+}
+
+.tabs button.active {
+  background: #176b87;
+  color: #fff;
+  border-color: #176b87;
 }
 
 .workspace {
@@ -192,6 +233,88 @@ textarea {
   color: #14724f;
   font-size: 12px;
   white-space: nowrap;
+}
+
+.status.pending { background: #fdf1e0; color: #9a6206; }
+.status.void { background: #eceff3; color: #69758c; }
+.status.redeemed { background: #e8eefb; color: #2f4f9e; }
+.status.expired { background: #fdeceb; color: #b03a2e; }
+
+.badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.message {
+  margin: 0;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.message.ok { background: #e8f4ef; color: #14724f; }
+.message.warn { background: #fdf1e0; color: #9a6206; }
+.message.error { background: #fdeceb; color: #b03a2e; }
+
+.hint {
+  margin: 0;
+  color: #69758c;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.check-group {
+  display: grid;
+  gap: 6px;
+}
+
+.check-label {
+  color: #445069;
+  font-size: 14px;
+}
+
+.check-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.check-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.check-row input {
+  width: auto;
+}
+
+.chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.chip {
+  background: #eef5fb;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #176b87;
+}
+
+.settle-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.redemption-panel {
+  margin-top: 18px;
 }
 
 .details {
