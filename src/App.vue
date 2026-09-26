@@ -1,193 +1,135 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, ref } from "vue";
+import { FUELS, STATIONS, seedCoupons, seedPrices } from "./data/seed";
+import { PRICE_STATUSES } from "./data/types";
+import type { Coupon, Entry, PriceRecord, Redemption } from "./data/types";
+import { currentPrice } from "./domain/pricing";
+import { judgeEntry, registerCoupon } from "./domain/coupons";
+import type { CouponDraft } from "./domain/coupons";
+import { quoteEntry, settleEntry } from "./domain/settlement";
+import { STORAGE_KEYS, loadCollection, saveCollection } from "./storage/local";
+import PricePanel from "./components/PricePanel.vue";
+import CouponPanel from "./components/CouponPanel.vue";
+import EntryPanel from "./components/EntryPanel.vue";
+import RedemptionPanel from "./components/RedemptionPanel.vue";
 
-type Field = {
-  key: string;
-  label: string;
-  type?: "number" | "date" | "select";
-  options?: readonly string[];
-};
+type Feedback = { kind: "ok" | "error"; text: string } | null;
 
-type RecordItem = {
-  id: string;
-  status: string;
-  notes: string;
-  createdAt: string;
-  [key: string]: string | number;
-};
+const today = () => new Date().toISOString().slice(0, 10);
+const now = () => new Date().toISOString();
 
-const project = {
-  "number": 9,
-  "folder": "dfwl/frontend/dfwlfront-9",
-  "framework": "vue",
-  "title": "油品价格维护",
-  "subtitle": "维护挂牌价、记录更新时间，并支持恢复默认价格。",
-  "industry": "石油",
-  "stack": [
-    "Vue3",
-    "Vite",
-    "TypeScript",
-    "Pinia",
-    "Naive UI"
-  ],
-  "storageKey": "dfwlfront-9-price",
-  "formTitle": "调整油品价格",
-  "primaryAction": "保存价格",
-  "entityLabel": "油品",
-  "statuses": [
-    "生效中",
-    "待确认",
-    "已回退"
-  ],
-  "filters": [
-    "全部油品",
-    "92号汽油",
-    "95号汽油",
-    "98号汽油",
-    "柴油"
-  ],
-  "fields": [
-    {
-      "key": "fuel",
-      "label": "油品",
-      "type": "select",
-      "options": [
-        "92号汽油",
-        "95号汽油",
-        "98号汽油",
-        "柴油"
-      ]
-    },
-    {
-      "key": "price",
-      "label": "挂牌价",
-      "type": "number"
-    },
-    {
-      "key": "operator",
-      "label": "操作员"
-    },
-    {
-      "key": "effectiveDate",
-      "label": "生效日期",
-      "type": "date"
-    }
-  ],
-  "records": [
-    {
-      "fuel": "92号汽油",
-      "price": 7.62,
-      "operator": "站长",
-      "effectiveDate": "2026-06-30",
-      "status": "生效中",
-      "notes": "正常调价"
-    },
-    {
-      "fuel": "柴油",
-      "price": 7.18,
-      "operator": "值班经理",
-      "effectiveDate": "2026-06-30",
-      "status": "待确认",
-      "notes": "等待复核"
-    }
-  ],
-  "metricLabels": [
-    "油品数",
-    "待确认",
-    "平均挂牌价"
-  ]
-} as const;
+// 本机保存的四类资料
+const prices = ref<PriceRecord[]>(loadCollection(STORAGE_KEYS.prices, seedPrices));
+const coupons = ref<Coupon[]>(loadCollection(STORAGE_KEYS.coupons, seedCoupons));
+const entries = ref<Entry[]>(loadCollection(STORAGE_KEYS.entries, () => []));
+const redemptions = ref<Redemption[]>(loadCollection(STORAGE_KEYS.redemptions, () => []));
 
-const fields = project.fields as readonly Field[];
-const statuses = [...project.statuses];
+const couponFeedback = ref<Feedback>(null);
+const entryFeedback = ref<Feedback>(null);
 
-function createBlank() {
-  return Object.fromEntries(fields.map((field) => [field.key, field.type === "number" ? 0 : ""]));
-}
+const persistPrices = () => saveCollection(STORAGE_KEYS.prices, prices.value);
+const persistCoupons = () => saveCollection(STORAGE_KEYS.coupons, coupons.value);
+const persistEntries = () => saveCollection(STORAGE_KEYS.entries, entries.value);
+const persistRedemptions = () => saveCollection(STORAGE_KEYS.redemptions, redemptions.value);
 
-function loadRecords(): RecordItem[] {
-  const raw = localStorage.getItem(project.storageKey);
-  if (!raw) {
-    return project.records.map((record, index) => ({
-      ...record,
-      id: `seed-${index + 1}`,
-      createdAt: new Date(Date.now() - index * 86400000).toISOString()
-    })) as RecordItem[];
-  }
-  try {
-    return JSON.parse(raw) as RecordItem[];
-  } catch {
-    return [];
-  }
-}
+const currentPrices = computed(() =>
+  FUELS.map((fuel) => ({ fuel, price: currentPrice(prices.value, fuel, today()) }))
+);
 
-const records = ref<RecordItem[]>(loadRecords());
-const form = reactive<Record<string, string | number>>(createBlank());
-const note = ref("");
-const filter = ref(project.filters[0]);
+const activeEntries = computed(() => entries.value.filter((entry) => entry.status === "已入场"));
 
-const filteredRecords = computed(() => {
-  if (filter.value.startsWith("全部")) return records.value;
-  return records.value.filter((record) => Object.values(record).includes(filter.value));
-});
+const metrics = computed(() => [
+  coupons.value.filter((coupon) => coupon.status === "生效中").length,
+  coupons.value.filter((coupon) => coupon.status === "待审").length,
+  activeEntries.value.length,
+  redemptions.value.reduce((sum, record) => sum + record.netAmount, 0).toFixed(2)
+]);
 
-const metrics = computed(() => {
-  const total = records.value.length;
-  const second = records.value.filter((record) => record.status === statuses[1]).length;
-  const third = records.value.filter((record) => record.status === statuses[2]).length;
-  const numberValues = records.value.flatMap((record) =>
-    fields.filter((field) => field.type === "number").map((field) => Number(record[field.key] || 0))
-  );
-  const sum = numberValues.reduce((acc, value) => acc + value, 0);
-  return [total, second || sum, third || Math.round(sum / Math.max(total, 1))];
-});
-
-const chartRows = computed(() => statuses.map((status) => ({
-  status,
-  value: records.value.filter((record) => record.status === status).length
-})));
-
-const maxChart = computed(() => Math.max(1, ...chartRows.value.map((row) => row.value)));
-
-function persist() {
-  localStorage.setItem(project.storageKey, JSON.stringify(records.value));
-}
-
-function nextStatus(status: string) {
-  const index = statuses.indexOf(status);
-  return statuses[(index + 1) % statuses.length];
-}
-
-function primaryText(record: RecordItem) {
-  const first = fields[0];
-  const second = fields[1];
-  return [record[first.key], record[second.key]].filter(Boolean).join(" / ") || project.entityLabel;
-}
-
-function submit() {
-  records.value = [
-    {
-      ...form,
-      id: crypto.randomUUID(),
-      status: statuses[0],
-      notes: note.value || "暂无备注",
-      createdAt: new Date().toISOString()
-    } as RecordItem,
-    ...records.value
+// 价格维护
+function addPrice(draft: { fuel: string; price: number; operator: string; effectiveDate: string; notes: string }) {
+  prices.value = [
+    { ...draft, id: crypto.randomUUID(), status: "生效中", createdAt: now() },
+    ...prices.value
   ];
-  Object.assign(form, createBlank());
-  note.value = "";
-  persist();
+  persistPrices();
 }
 
-function flow(record: RecordItem) {
-  record.status = nextStatus(record.status);
-  persist();
+function flowPrice(id: string) {
+  const record = prices.value.find((item) => item.id === id);
+  if (!record) return;
+  const index = PRICE_STATUSES.indexOf(record.status);
+  record.status = PRICE_STATUSES[(index + 1) % PRICE_STATUSES.length];
+  persistPrices();
 }
 
-function remove(id: string) {
-  records.value = records.value.filter((record) => record.id !== id);
-  persist();
+function removePrice(id: string) {
+  prices.value = prices.value.filter((item) => item.id !== id);
+  persistPrices();
+}
+
+// 券包登记：重复券码只保留首次，冲突留在待审
+function onRegisterCoupon(draft: CouponDraft) {
+  const result = registerCoupon(coupons.value, draft, now());
+  if (!result.ok) {
+    couponFeedback.value = { kind: "error", text: result.reason };
+    return;
+  }
+  coupons.value = [result.coupon, ...coupons.value];
+  persistCoupons();
+  couponFeedback.value = result.coupon.status === "待审"
+    ? { kind: "error", text: `已登记但留在待审：${result.coupon.conflictNote}` }
+    : { kind: "ok", text: `券 ${result.coupon.code} 登记成功，已生效` };
+}
+
+function approveCoupon(id: string) {
+  const coupon = coupons.value.find((item) => item.id === id);
+  if (!coupon) return;
+  coupon.status = "生效中";
+  persistCoupons();
+}
+
+function voidCoupon(id: string) {
+  const coupon = coupons.value.find((item) => item.id === id);
+  if (!coupon) return;
+  coupon.status = "已作废";
+  persistCoupons();
+}
+
+// 入场预占：按当时挂牌价与优惠锁价
+function onEnter(draft: { code: string; plate: string; station: string }) {
+  const coupon = coupons.value.find((item) => item.code === draft.code);
+  const judgment = judgeEntry(coupon, draft.code, draft.station, today(), entries.value, redemptions.value);
+  if (!judgment.ok) {
+    entryFeedback.value = { kind: "error", text: judgment.reason };
+    return;
+  }
+  const price = currentPrice(prices.value, coupon!.fuel, today());
+  if (price === null) {
+    entryFeedback.value = { kind: "error", text: `油品 ${coupon!.fuel} 暂无挂牌价，请先维护价格` };
+    return;
+  }
+  const entry = quoteEntry(coupon!, price, draft.plate, draft.station, now());
+  entries.value = [entry, ...entries.value];
+  persistEntries();
+  entryFeedback.value = {
+    kind: "ok",
+    text: `${draft.plate} 已入场：锁定挂牌价 ${price.toFixed(2)} 元/升，每升优惠 ${entry.lockedDiscount.toFixed(2)} 元`
+  };
+}
+
+// 结算：用预占快照生成核销记录，调价不追溯
+function onSettle(entryId: string, liters: number) {
+  const entry = entries.value.find((item) => item.id === entryId);
+  if (!entry || entry.status !== "已入场") return;
+  const redemption = settleEntry(entry, liters, now());
+  entry.status = "已结算";
+  redemptions.value = [redemption, ...redemptions.value];
+  persistEntries();
+  persistRedemptions();
+  entryFeedback.value = {
+    kind: "ok",
+    text: `${entry.plate} 已结算：${liters} 升，门店实收 ${redemption.netAmount.toFixed(2)} 元`
+  };
 }
 </script>
 
@@ -196,77 +138,68 @@ function remove(id: string) {
     <div class="shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">{{ project.industry }}行业前端最小闭环</p>
-          <h1>{{ project.title }}</h1>
-          <p class="subtitle">{{ project.subtitle }}</p>
+          <p class="eyebrow">石油行业前端最小闭环</p>
+          <h1>企业券包核销台</h1>
+          <p class="subtitle">
+            维护挂牌价、登记企业券包（企业 / 油品 / 每升优惠 / 适用站点 / 批次 / 有效时段），
+            同企业同油品时段重叠自动留待审；入场按当时价格预占，结算生成核销记录，调价不追溯。
+          </p>
         </div>
         <div class="stack">
-          <span v-for="item in project.stack" :key="item" class="tag">{{ item }}</span>
+          <span class="tag">Vue3</span>
+          <span class="tag">Vite</span>
+          <span class="tag">TypeScript</span>
         </div>
       </header>
 
       <section class="metrics">
-        <article v-for="(label, index) in project.metricLabels" :key="label" class="metric">
-          <span>{{ label }}</span>
-          <strong>{{ metrics[index] }}</strong>
+        <article class="metric">
+          <span>生效券</span>
+          <strong>{{ metrics[0] }}</strong>
+        </article>
+        <article class="metric">
+          <span>待审券</span>
+          <strong>{{ metrics[1] }}</strong>
+        </article>
+        <article class="metric">
+          <span>在场车辆</span>
+          <strong>{{ metrics[2] }}</strong>
+        </article>
+        <article class="metric">
+          <span>累计实收（元）</span>
+          <strong>{{ metrics[3] }}</strong>
         </article>
       </section>
 
       <section class="workspace">
-        <form class="panel" @submit.prevent="submit">
-          <h2>{{ project.formTitle }}</h2>
-          <div class="form-grid">
-            <label v-for="field in fields" :key="field.key">
-              {{ field.label }}
-              <select v-if="field.type === 'select'" v-model="form[field.key]" required>
-                <option value="">请选择</option>
-                <option v-for="option in field.options" :key="option">{{ option }}</option>
-              </select>
-              <input v-else v-model="form[field.key]" :type="field.type || 'text'" required />
-            </label>
-            <label>
-              备注
-              <textarea v-model="note" placeholder="填写处理说明或现场备注" />
-            </label>
-            <button type="submit">{{ project.primaryAction }}</button>
-          </div>
-        </form>
+        <PricePanel
+          :records="prices"
+          :fuels="FUELS"
+          :current-prices="currentPrices"
+          @add="addPrice"
+          @flow="flowPrice"
+          @remove="removePrice"
+        />
+        <CouponPanel
+          :coupons="coupons"
+          :fuels="FUELS"
+          :stations="STATIONS"
+          :feedback="couponFeedback"
+          @register="onRegisterCoupon"
+          @approve="approveCoupon"
+          @void="voidCoupon"
+        />
+      </section>
 
-        <section class="list-panel">
-          <div class="toolbar">
-            <h2>{{ project.entityLabel }}列表</h2>
-            <select v-model="filter">
-              <option v-for="item in project.filters" :key="item">{{ item }}</option>
-            </select>
-          </div>
-
-          <div class="record-grid">
-            <div v-if="filteredRecords.length === 0" class="empty">暂无匹配数据</div>
-            <article v-for="record in filteredRecords" :key="record.id" class="record">
-              <div class="record-head">
-                <p class="record-title">{{ primaryText(record) }}</p>
-                <span class="status">{{ record.status }}</span>
-              </div>
-              <div class="details">
-                <span v-for="field in fields" :key="field.key">{{ field.label }}: {{ record[field.key] }}</span>
-              </div>
-              <p class="note">{{ record.notes }}</p>
-              <div class="actions">
-                <button type="button" @click="flow(record)">流转状态</button>
-                <button class="secondary" type="button" @click="navigator.clipboard?.writeText(primaryText(record))">复制摘要</button>
-                <button class="danger" type="button" @click="remove(record.id)">删除</button>
-              </div>
-            </article>
-          </div>
-
-          <div class="mini-chart">
-            <div v-for="row in chartRows" :key="row.status" class="bar">
-              <span>{{ row.status }}</span>
-              <div class="bar-track"><div class="bar-fill" :style="{ width: `${(row.value / maxChart) * 100}%` }" /></div>
-              <strong>{{ row.value }}</strong>
-            </div>
-          </div>
-        </section>
+      <section class="workspace lower">
+        <EntryPanel
+          :active-entries="activeEntries"
+          :stations="STATIONS"
+          :feedback="entryFeedback"
+          @enter="onEnter"
+          @settle="onSettle"
+        />
+        <RedemptionPanel :redemptions="redemptions" />
       </section>
     </div>
   </main>
